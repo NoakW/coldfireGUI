@@ -11,7 +11,7 @@ import queue
 import sequences
 import testengine
 import threading
-import bscan
+from bscan import bscan_main
 from matplotlib import gridspec
 
 UDP_TRANSMIT_MESSAGE_QUEUE = queue.Queue()
@@ -491,16 +491,16 @@ def trace():
             udp_socket.sendto(udp_message, (COLDFIRE_IP, UDP_PORT))
             time.sleep(0.2)
 
-    time.sleep(0.1)  # Wait for trace to be written
+    time.sleep(0.2)  # Wait for trace to be written
 
     written = False
     while not written:
         try:
             with open(TRACE_FILE, 'r') as f:
                 lines = [line.strip() for line in f.readlines() if line.strip()]  # Ignore empty lines
-
             if lines:
-                last_line = lines[-1]  # Get last non-empty line
+                last_line = lines[-1]
+                second_last_line = lines[-2] # Get last non-empty line
                 if last_line == last_recorded_row:
                     time.sleep(0.5)
                     continue
@@ -508,6 +508,17 @@ def trace():
                 fields = last_line.split(',')
                 channel_number = int(fields[1].strip())  # Convert channel to int safely
                 if channel_number == 2:
+
+                    new_line = f"{command_input.get()},{repeat_input.get()},{runs_input.get()},{last_line}"
+                    lines[-1] = new_line  # Update last line in list
+
+                    new_line2 = f"{command_input.get()},{repeat_input.get()},{runs_input.get()},{second_last_line}"
+                    lines[-2] = new_line2  # Update last line in list
+
+                    # Write back to file
+                    with open(TRACE_FILE, 'w') as f:
+                        f.write("\n".join(lines) + "\n")
+
                     update_trace_plot(arg=1)
                     written = True
                     print("Trace plot updated for channel 2.")
@@ -519,7 +530,6 @@ def trace():
             print(f"Error reading trace file: {e}")
 
         time.sleep(0.1)  # Avoid excessive CPU usage
-
 
 def update_trace_plot(arg):
     global all_traces  # Ensure we modify the global list
@@ -536,7 +546,7 @@ def update_trace_plot(arg):
 
             # Convert lines to numerical data, skipping the first 6 columns
             new_trace_data = [
-                list(map(float, line.strip().split(',')[6:]))  # Skip first 6 columns
+                list(map(float, line.strip().split(',')[9:]))  # Skip first 6 columns
                 for i, line in enumerate(lines[1:]) if i % 2 == 0 and line.strip()
             ]
 
@@ -546,10 +556,12 @@ def update_trace_plot(arg):
 
 
                 try:
-                    order = int(command_input.get().strip())
-                    runs = int(runs_input.get().strip())
-                    reps = int(repeat_input.get().strip())
-                    bscan.bscan_main(order,runs,bscan_canvas,flipper, TRACE_FILE,reps)
+                    #order = int(command_input.get().strip())
+                    #runs = int(runs_input.get().strip())
+                    #reps = int(repeat_input.get().strip())
+                    #bscan.bscan_main(order,runs,bscan_canvas,enable_drawMeanLine_var, TRACE_FILE,reps)
+                    info_string = bscan_main(bscan_canvas, enable_drawMeanLine_var, TRACE_FILE, plot_threshold_input)
+                    response_text.insert(tk.END,info_string)
                 except Exception as e:
                     response_text.insert(tk.END,f"Error parsing order or runs: {e}")
 
@@ -836,6 +848,7 @@ tk.Checkbutton(debug_frame, text="Enable MESSAGE Debug", variable=enable_MESSAGE
 tk.Checkbutton(debug_frame, text="Enable HEX Debug", variable=enable_HEX_debug_var).grid(row=1, column=0, sticky="w", padx=5, pady=2)
 tk.Checkbutton(debug_frame, text="Enable Coldfire Response", variable=enable_RESPONSE_debug_var).grid(row=2, column=0, sticky="w", padx=5, pady=2)
 
+
 connect_button = tk.Button(debug_frame, text="Connect to FPGA", width=25, command=lambda: connect_udp())
 connect_button.grid(row=0, column=1, rowspan=3, padx=10, pady=2, sticky="ns")
 
@@ -919,6 +932,15 @@ update_trace_button = ttk.Button(button_frame2, text="Clear Trace Plot", width=i
                                  command=lambda: update_trace_plot(arg=0))
 update_trace_button.grid(row=0, column=1, padx=5)  # Place next to cleanup_button
 
+enable_drawMeanLine_var = tk.BooleanVar(value=1)
+tk.Checkbutton(master=button_frame2, text="Enable Mean Line", variable=enable_drawMeanLine_var).grid(row=1, column=0, sticky="w", padx=5, pady=2)
+
+tk.Label(button_frame2, text="Plot threshold:").grid(row=2, column=0, sticky="e", padx=5, pady=2)
+plot_threshold_input = tk.Entry(button_frame2, width=10)
+plot_threshold_input.grid(row=2, column=1, padx=5, pady=2)
+plot_threshold_input.insert(tk.END, 30)
+
+
 # === Matplotlib Figure & Canvas ===
 fig = plt.figure(figsize=(6, 12), dpi=100)  # Adjust figure size for better spacing
 gs = gridspec.GridSpec(3, 1, height_ratios=[1, 1, 1])  # 3 rows, 1 column
@@ -951,7 +973,8 @@ bscan_ax2 = bscan_fig.add_subplot(bscan_gs[1, 0])  # B-scan Bottom Plot
 
 # Set titles for the subplots
 bscan_ax1.set_title("Correlated Traces")
-bscan_ax2.set_title("Final B-Scan")
+bscan_ax2.set_title("B-Scan Autocorrelation")
+gs = bscan_fig.add_gridspec(2, 1, height_ratios=[1, 3])  # Define grid layout
 
 # Adjust the subplot spacing to ensure the second y-axis fits
 bscan_fig.subplots_adjust(right=0.85)  # Adjust the right side to make space for the second y-axis
