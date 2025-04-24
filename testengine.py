@@ -7,6 +7,7 @@ import tkinter as tk
 import struct
 import traceback
 from queue import Empty
+import os
 
 UDP_IP_TEST_COMPUTER = "192.168.1.1"
 UDP_IP_BLOCKMASTER = "192.168.1.2"
@@ -107,11 +108,32 @@ def stop_run(udp_socket, response_text, mode):
         response_text.insert(tk.END,f"Unexpected error: no active threads\n")
 
 
-def start_run(udp_socket, order, repeat, runs,data_file,response_text,mode):
+def start_run(udp_socket, latest_run_params,data_file,response_text,mode):
     global run_thread, stop_threads, receiver_thread_instance, processor_thread_instance
+
+    filename = data_file.get()
+    file_path = os.path.join("runs", filename)
+
+    if not os.path.exists(file_path):
+        try:
+            # Create the directory if it doesn't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            # Create an empty file
+            with open(file_path, 'w') as f:
+                f.write("")  # or add headers/content if needed
+            response_text.insert(tk.END, f"Created new file: {file_path}\n")
+        except Exception as e:
+            response_text.insert(tk.END, f"Error creating file: {e}\n")
+            return
 
     if run_thread and run_thread.is_alive():
         return
+
+    order = latest_run_params["Order"]
+    repeat = latest_run_params["Reps"]
+    runs = latest_run_params["Runs"]
+    stacks = latest_run_params["Stacks"]
+    delay = latest_run_params["Delay"]
 
     stop_threads = False
 
@@ -126,7 +148,8 @@ def start_run(udp_socket, order, repeat, runs,data_file,response_text,mode):
     receiver_thread_instance.start()
 
     # Start the processor thread to process the data from the queue
-    processor_thread_instance = threading.Thread(target=processor_thread, args=[order, repeat, runs,data_file], daemon=True)
+    processor_thread_instance = threading.Thread(target=processor_thread,
+                                                 args=[order, repeat, runs, stacks, delay, file_path], daemon=True)
     processor_thread_instance.start()
     if mode == "RUN":
         try:
@@ -177,7 +200,7 @@ def received_rundata_handler(mysocket,response_text):
             response_text.insert(tk.END,f"Receiver Error: {e}\n")
 
 
-def processor_thread(order, reps, runs, data_file):
+def processor_thread(order, reps, runs, stacks, delay, data_file):
     """Processes UDP packets from queue and writes to file only if dynamic_channel_id == 2"""
     received_traces = {}
     address = UDP_IP_RX
@@ -189,6 +212,9 @@ def processor_thread(order, reps, runs, data_file):
                 continue
 
             package_header = PackageHeader(data[:16])
+            if len(data) < 33:
+                print(f"[Soft ProcessorThread WARNING] Data too short for BlockHeader: {len(data)} bytes")
+                continue
             block_header = BlockHeader(data[16:33])
 
             # Extract trace data
@@ -238,7 +264,7 @@ def processor_thread(order, reps, runs, data_file):
 
                 # Only store if channel ID is 2
                 if channel_id == 2:
-                    new_row = f"{order},{reps},{runs},{address},{channel_id},{time.time()},empty1,empty2,empty3,{','.join(map(str, full_trace))}\n"
+                    new_row = f"{order},{reps},{runs},{stacks},{delay},{address},{channel_id},{time.time()},empty1,empty2,empty3,{','.join(map(str, full_trace))}\n"
 
                     try:
                         with open(data_file, 'r') as f:
@@ -257,7 +283,6 @@ def processor_thread(order, reps, runs, data_file):
             continue
         except Exception as e:
             print(f"[ProcessorThread ERROR] {e}")
-            traceback.print_exc()
 
 
 def create_UDP_command_packet(id, payload_size, cmd, rw, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8):
